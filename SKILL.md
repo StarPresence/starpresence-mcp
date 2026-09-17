@@ -21,7 +21,7 @@ Legacy path: an admin-issued per-business bearer token (also `sragt_...`). If yo
 
 ## The toolset depends on your credential
 
-The seven business tools live at the main endpoint and require a credential: call it without one and you get a 401 challenge, not a tool list. The three free discovery tools (`get_service_info`, `search_business`, `check_response_rate`) live at `POST https://mcp.starreview.ch/public`, which needs no credential at all. The two sets are disjoint. The free `check_response_rate` result is cached ~30 days - never repeat it for the same place.
+The eight business tools live at the main endpoint and require a credential: call it without one and you get a 401 challenge, not a tool list. The one free discovery tool (`get_service_info`) lives at `POST https://mcp.starreview.ch/public`, which needs no credential at all. The two sets are disjoint.
 
 ## Result envelope: parse twice
 
@@ -54,7 +54,8 @@ Every review carries a `provider` field (`google`, `tripadvisor`, ...). The valu
 2. `get_review_context` for the full text, language, and any existing draft variants.
 3. Either `draft_reply` (StarReview generates variants in the business's voice, saved as drafts) then `submit_reply_for_approval` with the chosen `variant` (optionally `finalText` to edit it), OR `submit_own_reply` with your own `finalText` (no StarReview draft; ALWAYS requires human approval, never auto-schedules).
 4. Optional `preferredPostAt` (ISO 8601): StarReview will not post before that time.
-5. Read the submit response:
+5. Optional `add_publish_source` (`kind`, `url`, `destination_selection_id`, optional `instruction`/`language`/`name`) adds a Quelle in `review` mode. Never send `mode: unattended` — that is refused with `unattended_requires_human`.
+6. Read the submit response:
    - `submit_reply_for_approval` returns `{ submitted, autoScheduled, gateOutcomes }` - `gateOutcomes` explains whether the reply scheduled on the owner's standing consent or waits in the approval queue.
    - `submit_own_reply` returns `{ submitted: true, autoScheduled: false }`; your own text always waits for a human.
    - A provider without a posting API does not auto-schedule from an agent submission. It remains pending until human approval; only then does the owner receive the manual-post outcome below.
@@ -75,6 +76,8 @@ Refusals (audited as denied; do NOT blind-retry - each needs a different respons
 | `not_editable` | reply past its editable state | stop |
 | `already_processed` | duplicate submission | treat as success |
 | `business_not_connected` | owner has no connected business | send them to onboarding |
+| `fact_resolution_required` | the reply needs an exact Geschäft selection before its facts are safe to use | ask the owner to resolve the held item in StarReview; retry only after resolution |
+| `unattended_requires_human` | `add_publish_source` cannot opt a Quelle into unbeaufsichtigt | tell the owner to switch the source in StarReview; do not retry with `mode: unattended` |
 
 Failures and limits:
 
@@ -83,9 +86,7 @@ Failures and limits:
 | `unknown_tool` | no such tool | fix the tool name |
 | `invalid_arguments` | schema validation failed (never burns quota) | fix the arguments |
 | `not_found` | referenced entity does not exist | re-fetch context |
-| `unknown_place` | placeId not from a recent `search_business` | re-run `search_business` first |
-| `search_unavailable` | `search_business` upstream budget spent | retry later |
-| `check_unavailable` | `check_response_rate` upstream budget spent (cached places still answer) | retry later |
+| `surface_retired` | tool was published and has since been retired (`search_business`, `check_response_rate`) — do not call it again | do not call it again |
 | `variant_not_found` | variant number does not exist for this review | re-run `draft_reply` |
 | `rate_limited_per_minute` | per-minute cap hit | back off ≥60s |
 | `daily_cap_exceeded` / `daily_draft_cap_exceeded` | daily cap hit | stop for the day |
@@ -94,11 +95,11 @@ Failures and limits:
 
 ## Rate limits
 
-Authenticated: 20 tool calls/min per credential; `draft_reply` ~25/day. Public: the binding limit is **10 tool calls/min per IP**, plus `search_business` 12/day and `check_response_rate` 5/day (a separate 30 req/min HTTP burst shield sits outside these - do not pace against it). Invalid arguments are rejected before any quota is claimed.
+Authenticated: 20 tool calls/min per credential; `draft_reply` ~25/day. Public: the binding limit is **10 tool calls/min per IP** (a separate 30 req/min HTTP burst shield sits outside these - do not pace against it). Invalid arguments are rejected before any quota is claimed.
 
 ## Boundaries (state them accurately)
 
-- An agent cannot publish to any provider: structural - no publish tool exists.
+- An agent cannot publish to any provider: structural - there is no posting tool. `add_publish_source` creates a Quelle; it never posts and cannot opt the source into unbeaufsichtigt.
 - StarReview applies the owner's existing approval and provider-specific automatic-publishing settings. On a live posting API, an eligible, unedited StarReview draft may schedule without another click when current Agent Consent and safety checks allow it.
 - Agent-written, edited, or safety-held replies remain pending. `submit_own_reply` never takes the automatic path.
 - A provider without a posting API remains pending until human approval; the owner then posts manually through the returned link.
