@@ -68,8 +68,9 @@ test('binds candidate and publish to exact GitHub App pipeline values', () => {
   assert.ok(!config.includes('CIRCLE_SHA1'));
 
   assert.ok(candidate.includes(
-    '"$PIPELINE_REPO_URL" != "https://github.com/Fabsbags/starreview-mcp"',
+    '"$PIPELINE_REPO_URL" != "https://github.com/StarPresence/starpresence-mcp"',
   ));
+  assert.ok(publish.includes('"$PIPELINE_REPO_URL" != "https://github.com/StarPresence/starpresence-mcp"'));
   assert.ok(candidate.includes('"$PIPELINE_CONFIG_REF" != "refs/heads/main"'));
   assert.ok(candidate.includes('"$PIPELINE_GIT_BRANCH" != "main"'));
   assert.ok(candidate.includes('"$PIPELINE_EVENT_NAME" != "push"'));
