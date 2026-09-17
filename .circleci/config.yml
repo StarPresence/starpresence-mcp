@@ -49,7 +49,7 @@ jobs:
   candidate:
     executor: release_node
     environment:
-      # Reviewed Fabsbags/starreview-agent main commit used for the consumer
+      # Reviewed StarPresence/starpresence-agent main commit used for the consumer
       # contract test. Update this full SHA in a reviewed pull request.
       CLI_SHA: "2317d5d95dccf29ba1e616fb98742a91879e76f4"
       PIPELINE_REPO_URL: << pipeline.git.repo_url >>
@@ -66,12 +66,12 @@ jobs:
           command: |
             set -euo pipefail
 
-            if [[ "$PIPELINE_REPO_URL" != "https://github.com/Fabsbags/starreview-mcp" ]]; then
-              echo "Refusing release candidate outside Fabsbags/starreview-mcp."
+            if [[ "$PIPELINE_REPO_URL" != "https://github.com/StarPresence/starpresence-mcp" ]]; then
+              echo "Refusing release candidate outside StarPresence/starpresence-mcp (pipeline repo url: $PIPELINE_REPO_URL)."
               exit 1
             fi
-            if [[ "$PIPELINE_CONFIG_REPOSITORY" != "Fabsbags/starreview-mcp" ]]; then
-              echo "Refusing a config sourced outside Fabsbags/starreview-mcp."
+            if [[ "$PIPELINE_CONFIG_REPOSITORY" != "StarPresence/starpresence-mcp" ]]; then
+              echo "Refusing a config sourced outside StarPresence/starpresence-mcp."
               exit 1
             fi
             if [[ "$PIPELINE_CONFIG_REF" != "refs/heads/main" || "$PIPELINE_GIT_BRANCH" != "main" ]]; then
@@ -101,10 +101,10 @@ jobs:
             fi
 
             origin_url="$(git remote get-url origin)"
-            if [[ ! "$origin_url" =~ github\.com[:/]Fabsbags/starreview-mcp(\.git)?$ ]]; then
+            if [[ ! "$origin_url" =~ github\.com[:/]StarPresence/starpresence-mcp(\.git)?$ ]]; then
               # Do not print the URL: a GitHub App checkout may embed an
               # ephemeral credential in it.
-              echo "Checkout origin is not Fabsbags/starreview-mcp."
+              echo "Checkout origin is not StarPresence/starpresence-mcp."
               exit 1
             fi
 
@@ -160,7 +160,7 @@ jobs:
             if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version)) {
               throw new Error(`release version must be semver-like: ${pkg.version}`);
             }
-            if (pkg.repository?.url !== 'git+https://github.com/Fabsbags/starreview-mcp.git') {
+            if (pkg.repository?.url !== 'git+https://github.com/StarPresence/starpresence-mcp.git') {
               throw new Error('package repository must identify the trusted-publisher repository');
             }
             if (pkg.publishConfig?.access !== 'public') {
@@ -233,7 +233,7 @@ jobs:
               --filter=blob:none \
               --single-branch \
               --branch main \
-              https://github.com/Fabsbags/starreview-agent.git \
+              https://github.com/StarPresence/starpresence-agent.git \
               /tmp/cli-consumer
             git -C /tmp/cli-consumer checkout --detach "$CLI_SHA"
 
@@ -244,7 +244,7 @@ jobs:
             fi
             if ! git -C /tmp/cli-consumer merge-base --is-ancestor \
               "$CLI_SHA" refs/remotes/origin/main; then
-              echo "Pinned CLI commit is not reachable from Fabsbags/starreview-agent main."
+              echo "Pinned CLI commit is not reachable from StarPresence/starpresence-agent main."
               exit 1
             fi
 
@@ -439,12 +439,12 @@ jobs:
             version="$(cat "$release_dir/version.txt")"
             mirror_sha="$(cat "$release_dir/mirror-sha.txt")"
 
-            if [[ "$PIPELINE_REPO_URL" != "https://github.com/Fabsbags/starreview-mcp" ]]; then
-              echo "Refusing trusted publish outside Fabsbags/starreview-mcp."
+            if [[ "$PIPELINE_REPO_URL" != "https://github.com/StarPresence/starpresence-mcp" ]]; then
+              echo "Refusing trusted publish outside StarPresence/starpresence-mcp (pipeline repo url: $PIPELINE_REPO_URL)."
               exit 1
             fi
-            if [[ "$PIPELINE_CONFIG_REPOSITORY" != "Fabsbags/starreview-mcp" ]]; then
-              echo "Refusing a config sourced outside Fabsbags/starreview-mcp."
+            if [[ "$PIPELINE_CONFIG_REPOSITORY" != "StarPresence/starpresence-mcp" ]]; then
+              echo "Refusing a config sourced outside StarPresence/starpresence-mcp."
               exit 1
             fi
             if [[ "$PIPELINE_CONFIG_REF" != "refs/heads/main" || "$PIPELINE_GIT_BRANCH" != "main" ]]; then
@@ -474,7 +474,7 @@ jobs:
 
             remote_main_line="$(
               git ls-remote \
-                https://github.com/Fabsbags/starreview-mcp.git \
+                https://github.com/StarPresence/starpresence-mcp.git \
                 refs/heads/main
             )"
             if [[ "$remote_main_line" != "$mirror_sha"$'\trefs/heads/main' ]]; then
