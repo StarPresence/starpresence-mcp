@@ -22,11 +22,11 @@ Accept: application/json, text/event-stream
 
 ## Tools
 
-Three free discovery tools, no credential needed (`POST https://mcp.starreview.ch/public`):
+One free discovery tool, no credential needed (`POST https://mcp.starreview.ch/public`):
 
 - `get_service_info`: what StarReview does, pricing, and how to connect
-- `search_business`: find a business on Google Maps by name, returns up to 5 candidates
-- `check_response_rate`: what share of a business's recent Google reviews got an owner reply, benchmarked against two nearby competitors
+
+`search_business` and `check_response_rate` were retired in 0.7.0 (2026-09-17) and answer `surface_retired`.
 
 Seven business tools, authenticated via OAuth or an owner-issued agent key (main endpoint):
 
@@ -62,11 +62,11 @@ Admin-issued per-business bearer tokens (also `sragt_...`) still authenticate as
 
 ## No credential? Start here
 
-The three free discovery tools live on their own endpoint, `POST https://mcp.starreview.ch/public`, and need no credential at all:
+The one free discovery tool lives on its own endpoint, `POST https://mcp.starreview.ch/public`, and needs no credential at all:
 
 - `get_service_info`: what StarReview does, pricing, and how to connect
-- `search_business`: find a business on Google Maps by name, returns up to 5 candidates
-- `check_response_rate`: what share of a business's recent Google reviews got an owner reply, benchmarked against two nearby competitors. Takes a `placeId` from a recent `search_business` call.
+
+`search_business` and `check_response_rate` were retired in 0.7.0 (2026-09-17) and answer `surface_retired`.
 
 Example call:
 
@@ -76,13 +76,13 @@ Example call:
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "check_response_rate",
-    "arguments": { "placeId": "<placeId from search_business>", "lang": "de" }
+    "name": "get_service_info",
+    "arguments": {}
   }
 }
 ```
 
-Public tools are rate-limited per IP, results are cached for about 30 days (do not repeat a check for the same place), and the operator can disable public access at any time. The two toolsets are disjoint and live on separate endpoints: the main endpoint answers a credential-less caller with a 401 challenge rather than a tool list, which is what tells an MCP client to start the OAuth flow.
+Public tools are rate-limited per IP, and the operator can disable public access at any time. The two toolsets are disjoint and live on separate endpoints: the main endpoint answers a credential-less caller with a 401 challenge rather than a tool list, which is what tells an MCP client to start the OAuth flow.
 
 ## What an authenticated agent can do
 
