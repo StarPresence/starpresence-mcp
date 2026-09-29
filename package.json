@@ -1,7 +1,7 @@
 {
-  "name": "@starreview/mcp",
-  "version": "0.7.0",
-  "description": "StarReview hosted MCP server for AI agents: draft and submit Google & TripAdvisor review replies for local businesses; agents can never post themselves - publishing stays under the owner's control. Ships the connection README and a drop-in agent skill (SKILL.md).",
+  "name": "@starpresence/mcp",
+  "version": "0.10.0",
+  "description": "StarPresence hosted MCP server for AI agents: draft and submit Google & TripAdvisor review replies for local businesses; agents can never post themselves - publishing stays under the owner's control. Ships the connection README and a drop-in agent skill (SKILL.md).",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -12,18 +12,19 @@
     "ai-agents",
     "oauth",
     "skill",
+    "starpresence",
     "starreview"
   ],
-  "homepage": "https://www.starreview.ch/en/agents",
+  "homepage": "https://starpresence.ai/en/agents",
   "bugs": {
-    "url": "https://www.starreview.ch/en/agents"
+    "url": "https://starpresence.ai/en/agents"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/StarPresence/starpresence-mcp.git"
   },
   "license": "MIT",
-  "author": "StarReview",
+  "author": "StarPresence",
   "files": [
     "README.md",
     "SKILL.md",

@@ -72,6 +72,9 @@ test('binds candidate and publish to exact GitHub App pipeline values', () => {
   ));
   assert.ok(publish.includes('"$PIPELINE_REPO_URL" != "https://github.com/StarPresence/starpresence-mcp"'));
   assert.ok(candidate.includes('"$PIPELINE_CONFIG_REF" != "refs/heads/main"'));
+  assert.ok(candidate.includes("if (pkg.name !== '@starpresence/mcp') {"));
+  assert.ok(!config.includes('@starreview/mcp'));
+  assert.equal(config.split('starpresence-mcp-$version.tgz').length - 1, 3);
   assert.ok(candidate.includes('"$PIPELINE_GIT_BRANCH" != "main"'));
   assert.ok(candidate.includes('"$PIPELINE_EVENT_NAME" != "push"'));
   assert.ok(candidate.includes('"$PIPELINE_CONFIG_SHA" != "$PIPELINE_GIT_REVISION"'));

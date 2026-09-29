@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Fabsbags/starreview",
-  "title": "StarReview",
+  "title": "StarPresence",
   "description": "Drafts Google & TripAdvisor review replies; agents can never post themselves. Free get_service_info.",
-  "version": "0.7.0",
-  "websiteUrl": "https://www.starreview.ch/en/agents",
+  "version": "0.10.0",
+  "websiteUrl": "https://starpresence.ai/en/agents",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mcp.starreview.ch/",
+      "url": "https://mcp.starpresence.ai/",
       "headers": [
         {
           "name": "Authorization",
-          "description": "Required at this endpoint. Connect via OAuth (recommended, plug-and-play; discovered from the endpoint's .well-known/oauth-protected-resource) OR send an sragt_ bearer key as Authorization: Bearer sragt_.... Owner-created self-service keys are account-wide and use the multi-business picker; legacy/admin per-business credentials may pin one business. The free discovery tool (get_service_info) needs no credential but lives at a separate URL: POST https://mcp.starreview.ch/public",
+          "description": "Required at this endpoint. Connect via OAuth (recommended, plug-and-play; discovered from the endpoint's .well-known/oauth-protected-resource) OR send an sragt_ bearer key as Authorization: Bearer sragt_.... Owner-created self-service keys are account-wide and use the multi-business picker; legacy/admin per-business credentials may pin one business. The free discovery tool (get_service_info) needs no credential but lives at a separate URL: POST https://mcp.starpresence.ai/public",
           "isRequired": true,
           "isSecret": true
         }
