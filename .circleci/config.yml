@@ -51,7 +51,7 @@ jobs:
     environment:
       # Reviewed StarPresence/starpresence-agent main commit used for the consumer
       # contract test. Update this full SHA in a reviewed pull request.
-      CLI_SHA: "2317d5d95dccf29ba1e616fb98742a91879e76f4"
+      CLI_SHA: "8864dd8890b7fa2a3dad08ac7439c6b2a474e5d7"
       PIPELINE_REPO_URL: << pipeline.git.repo_url >>
       PIPELINE_CONFIG_REPOSITORY: << pipeline.config.repository.name >>
       PIPELINE_CONFIG_REF: << pipeline.config.ref >>
