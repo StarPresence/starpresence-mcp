@@ -1,7 +1,7 @@
 {
   "$comment": "GENERATED FILE — do not hand-edit. Source: config/agentTools.js. Run npm run write:agent-contract.",
   "serverName": "starpresence",
-  "serverVersion": "0.10.0",
+  "serverVersion": "0.10.1",
   "resource": "https://mcp.starpresence.ai",
   "endpoint": "https://mcp.starpresence.ai/",
   "transport": "streamable-http",
@@ -6497,7 +6497,7 @@
     },
     {
       "name": "complete_onboarding",
-      "title": "Onboarding abschließen",
+      "title": "Onboarding abschliessen",
       "description": "Mark the caller's onboarding wizard complete (POST /api/account/complete-onboarding).",
       "annotations": {
         "readOnlyHint": false,

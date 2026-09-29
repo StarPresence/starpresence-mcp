@@ -3,7 +3,7 @@
   "name": "io.github.Fabsbags/starreview",
   "title": "StarPresence",
   "description": "Drafts Google & TripAdvisor review replies; agents can never post themselves. Free get_service_info.",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "websiteUrl": "https://starpresence.ai/en/agents",
   "remotes": [
     {
