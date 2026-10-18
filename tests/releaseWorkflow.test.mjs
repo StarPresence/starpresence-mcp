@@ -94,15 +94,22 @@ examined.jobs = Object.keys(jobs).length;
 examined.runBlocks = runBlocks(release).length + runBlocks(policy).length;
 examined.usesLines = usesOf(release).length + usesOf(policy).length;
 
-test('release.yml runs only on a manual dispatch and takes one boolean input that defaults to a dry run', () => {
+test('release.yml starts only on a push to main that changes a package file and on a manual dispatch with one dry-run input', () => {
   const onBlock = release.slice(release.indexOf('\non:\n') + 1, release.indexOf('\npermissions:\n'));
-  assert.deepEqual([...onBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]), ['workflow_dispatch']);
+  assert.deepEqual([...onBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]), ['push', 'workflow_dispatch']);
+  // The push is main only and limited to the package files: a change to a workflow, a test or a document starts nothing.
+  assert.ok(onBlock.startsWith(
+    'on:\n  push:\n    branches:\n      - main\n    paths:\n      - package.json\n      - server.json\n      - README.md\n'
+    + '      - SKILL.md\n      - LICENSE\n      - agent-contract.generated.json\n  workflow_dispatch:\n',
+  ));
+  assert.deepEqual([...onBlock.matchAll(/^ {4}([a-z_-]+):/gm)].map((match) => match[1]), ['branches', 'paths', 'inputs']);
   assert.deepEqual([...onBlock.matchAll(/^ {6}([a-z_]+):$/gm)].map((match) => match[1]), ['publish']);
   assert.ok(onBlock.includes('type: boolean'));
   assert.ok(onBlock.includes('default: false'));
   assert.ok(!release.includes('pull_request'));
   assert.ok(!release.includes('workflow_run'));
   assert.ok(!release.includes('schedule:'));
+  assert.ok(!/^\s+(?:tags|tags-ignore|branches-ignore|paths-ignore):/m.test(release));
 });
 
 test('grants read-only by default and id-token write only to the publish job, which names the protected environment', () => {
@@ -220,13 +227,13 @@ test('pins the runtime by exact version and checks the trusted-publishing minimu
   assert.ok(!/npm install (-g|--global)|npm i -g/.test(release));
 });
 
-test('binds the candidate and the publish job to this repository, main, a dispatch of release.yml and the exact commit', () => {
+test('binds the candidate and the publish job to this repository, main, a push or dispatch of release.yml and the exact commit', () => {
   const candidate = jobs.candidate;
   const publish = jobs.publish;
   for (const job of [candidate, publish]) {
     assert.ok(job.includes('"$GITHUB_REPOSITORY" != "StarPresence/starpresence-mcp"'));
     assert.ok(job.includes('"$GITHUB_REF" != "refs/heads/main"'));
-    assert.ok(job.includes('"$GITHUB_EVENT_NAME" != "workflow_dispatch"'));
+    assert.ok(job.includes('"$GITHUB_EVENT_NAME" != "push" && "$GITHUB_EVENT_NAME" != "workflow_dispatch"'));
     assert.ok(job.includes(
       '"$GITHUB_WORKFLOW_REF" != "StarPresence/starpresence-mcp/.github/workflows/release.yml@refs/heads/main"',
     ));
@@ -305,8 +312,9 @@ test('keeps the publishing permission inside an artifact-only job that runs no r
   assert.ok(skipAt < afterGuard.indexOf('npm publish'));
   assert.ok(dryRunBranchAt < afterGuard.lastIndexOf('npm publish'));
   assert.equal(release.match(/--provenance/g)?.length, 1);
-  // Whether a dispatch publishes is decided by the one input and by nothing else: the job reads it from `inputs`.
-  assert.ok(publish.includes('\n      INPUT_PUBLISH: ${{ inputs.publish }}\n'));
+  // Whether a run publishes is decided here and nowhere else: a push to main (the merge of the approved release pull
+  // request) publishes, a dispatch publishes only when its one input is ticked.
+  assert.ok(publish.includes("\n      INPUT_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}\n"));
   assert.equal(release.match(/INPUT_PUBLISH: /g)?.length, 1);
   // The artifact is this run's own: a download from another run would let that run's files reach the publish token.
   assert.ok(!release.includes('run-id'));
@@ -318,7 +326,7 @@ test('keeps the publishing permission inside an artifact-only job that runs no r
 
 test('verifies registry bytes, contents and provenance without publishing authority', () => {
   const verify = jobs.verify_registry;
-  assert.ok(verify.includes('if: ${{ inputs.publish }}'));
+  assert.ok(verify.includes("if: ${{ github.event_name == 'push' || inputs.publish }}"));
   assert.ok(verify.includes('uses: actions/download-artifact@'));
   assert.ok(!verify.includes('actions/checkout'));
   assert.ok(!verify.includes('npm publish'));
@@ -337,9 +345,12 @@ test('verifies registry bytes, contents and provenance without publishing author
 
 test('fails closed: nothing outside the scripts is conditional or allowed to fail, and no refusal is disarmed unnoticed', () => {
   assert.ok(!release.includes('continue-on-error'));
-  // The only conditional is the job-level one that skips the registry check on a dry run; every other decision is made
-  // inside a script, where the refusals below are counted.
-  assert.deepEqual([...release.matchAll(/^\s+if:.*$/gm)].map((match) => match[0]), ['    if: ${{ inputs.publish }}']);
+  // The only conditional is the job-level one that skips the registry check on a dry run (a push always checks); every
+  // other decision is made inside a script, where the refusals below are counted.
+  assert.deepEqual(
+    [...release.matchAll(/^\s+if:.*$/gm)].map((match) => match[0]),
+    ["    if: ${{ github.event_name == 'push' || inputs.publish }}"],
+  );
   assert.ok(release.includes('defaults:\n  run:\n    shell: bash\n'));
   const scripts = runBlocks(release).filter((block) => block.includes('\n'));
   assert.ok(scripts.length >= 12, `only ${scripts.length} scripts were examined`);

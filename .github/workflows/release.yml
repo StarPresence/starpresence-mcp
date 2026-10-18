@@ -13,16 +13,17 @@ name: "Release @starpresence/mcp"
 #   2. npm's trusted-publisher entry for @starpresence/mcp names this repository, this workflow file (release.yml) and the
 #      environment (npm-publish), so npm refuses a token minted by any other job.
 #   3. `main` requires one approving review and dismisses stale approvals, so a change to this file or to the package
-#      reaches `main` only after review.
+#      reaches `main` only after review. A push to `main` that changes a package file publishes by itself (the `on:` block
+#      below), so the approving review of that pull request is the go-ahead to publish.
 # What this file does by itself:
 #   - `candidate` runs the consumer test (code of another repository) and holds no publishing power; `publish` never checks
 #     out or runs repository or consumer code, it publishes the one tarball `candidate` packed;
 #   - the tarball travels between the jobs as an artifact uploaded BEFORE any consumer code runs (artifacts of a run cannot
 #     be overwritten), and `publish` re-checks its SHA-256, its file list and its metadata against what `candidate` recorded
 #     in the artifact and as job outputs;
-#   - it refuses, fail closed: a run that is not this repository, `main`, a manual dispatch of this file, the exact current
-#     `main` commit; a package whose metadata disagrees; a version already on npm with different bytes; an old toolchain; a
-#     long-lived npm credential in the publish job;
+#   - it refuses, fail closed: a run that is not this repository, `main`, a push or a manual dispatch of this file, the exact
+#     current `main` commit; a package whose metadata disagrees; a version already on npm with different bytes (the same bytes
+#     are a no-op, so a repeated push is harmless); an old toolchain; a long-lived npm credential in the publish job;
 #   - the actions are pinned by commit and the runtime by exact version, so a moved tag or a new release cannot change what
 #     runs next to the publish token; no expression is ever interpolated into a script (context reaches a script only
 #     through `env`);
@@ -31,14 +32,25 @@ name: "Release @starpresence/mcp"
 # The runners are GitHub-hosted on purpose: npm trusted publishing and provenance do not work from self-hosted or
 # third-party runners.
 #
-# Procedure (RELEASING.md): merge the reviewed release pull request, then dispatch this workflow from `main`, first with
-# `publish` unticked (a dry run: every check runs and nothing is published), then ticked.
+# Procedure (RELEASING.md): merge the reviewed release pull request. The push to `main` that changes a package file runs this
+# workflow and publishes: no dispatch, no further approval. A manual dispatch from `main` with `publish` unticked is a dry
+# run (every check runs and nothing is published); ticked, it publishes (a re-run after a failure).
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - server.json
+      - README.md
+      - SKILL.md
+      - LICENSE
+      - agent-contract.generated.json
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to npm. Unticked is a dry run: every check runs and nothing is published."
+        description: "Publish to npm. Unticked is a dry run: every check runs and nothing is published. (A push to main publishes without this input.)"
         type: boolean
         required: false
         default: false
@@ -106,8 +118,8 @@ jobs:
             echo "Refusing a release candidate outside the main branch (ref: $GITHUB_REF)."
             exit 1
           fi
-          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
-            echo "Refusing a release candidate not started by a manual dispatch (event: $GITHUB_EVENT_NAME)."
+          if [[ "$GITHUB_EVENT_NAME" != "push" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Refusing a release candidate not started by a push to main or a manual dispatch (event: $GITHUB_EVENT_NAME)."
             exit 1
           fi
           if [[ "$GITHUB_WORKFLOW_REF" != "StarPresence/starpresence-mcp/.github/workflows/release.yml@refs/heads/main" ]]; then
@@ -384,7 +396,8 @@ jobs:
       OUT_VERSION: ${{ needs.candidate.outputs.version }}
       OUT_SHA256: ${{ needs.candidate.outputs.sha256 }}
       OUT_DECISION: ${{ needs.candidate.outputs.decision }}
-      INPUT_PUBLISH: ${{ inputs.publish }}
+      # A push to main is the go-ahead (the merge of the approved release pull request); a dispatch publishes only when ticked.
+      INPUT_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
     steps:
       # Deliberately no checkout: this job must never execute repository or CLI code. It is the only job with a publishing
       # permission, and it reads no secret.
@@ -483,8 +496,8 @@ jobs:
             echo "Refusing trusted publish outside the main branch (ref: $GITHUB_REF)."
             exit 1
           fi
-          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
-            echo "Refusing trusted publish outside a manual dispatch (event: $GITHUB_EVENT_NAME)."
+          if [[ "$GITHUB_EVENT_NAME" != "push" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Refusing trusted publish outside a push to main or a manual dispatch (event: $GITHUB_EVENT_NAME)."
             exit 1
           fi
           if [[ "$GITHUB_WORKFLOW_REF" != "StarPresence/starpresence-mcp/.github/workflows/release.yml@refs/heads/main" ]]; then
@@ -601,14 +614,14 @@ jobs:
             echo "- sha256: \`$OUT_SHA256\`"
             echo "- commit: \`$OUT_MIRROR_SHA\`"
             echo "- registry decision: \`$OUT_DECISION\`"
-            echo "- publish input: \`$INPUT_PUBLISH\`"
+            echo "- publish requested: \`$INPUT_PUBLISH\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify_registry:
     needs:
       - candidate
       - publish
-    if: ${{ inputs.publish }}
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
