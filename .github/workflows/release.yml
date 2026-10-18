@@ -1,0 +1,746 @@
+name: "Release @starpresence/mcp"
+
+# Trusted publication of @starpresence/mcp from GitHub Actions (be#4578). It replaces the CircleCI chain that ran from
+# 2026-07 to 2026-10.
+#
+# This file holds the only `id-token: write` of the repository, in the `publish` job. Whoever can dispatch a workflow from
+# a branch could try to publish that branch's code with it, and a branch can edit this file. What stops that is NOT in this
+# file:
+#   1. `environment: npm-publish` is a GitHub environment whose deployment branches are limited to `main` (Settings,
+#      Environments), administrator bypass off. A dispatch from any other branch is refused by GitHub before the job starts,
+#      so it never receives an OIDC token. Create the environment BEFORE the first run: GitHub creates a missing one with
+#      no protection at all.
+#   2. npm's trusted-publisher entry for @starpresence/mcp names this repository, this workflow file (release.yml) and the
+#      environment (npm-publish), so npm refuses a token minted by any other job.
+#   3. `main` requires one approving review and dismisses stale approvals, so a change to this file or to the package
+#      reaches `main` only after review.
+# What this file does by itself:
+#   - `candidate` runs the consumer test (code of another repository) and holds no publishing power; `publish` never checks
+#     out or runs repository or consumer code, it publishes the one tarball `candidate` packed;
+#   - the tarball travels between the jobs as an artifact uploaded BEFORE any consumer code runs (artifacts of a run cannot
+#     be overwritten), and `publish` re-checks its SHA-256, its file list and its metadata against what `candidate` recorded
+#     in the artifact and as job outputs;
+#   - it refuses, fail closed: a run that is not this repository, `main`, a manual dispatch of this file, the exact current
+#     `main` commit; a package whose metadata disagrees; a version already on npm with different bytes; an old toolchain; a
+#     long-lived npm credential in the publish job;
+#   - the actions are pinned by commit and the runtime by exact version, so a moved tag or a new release cannot change what
+#     runs next to the publish token; no expression is ever interpolated into a script (context reaches a script only
+#     through `env`);
+#   - it reads no secret (there is none in this workflow) and publishes with provenance (`--provenance`), which the
+#     CircleCI chain could not.
+# The runners are GitHub-hosted on purpose: npm trusted publishing and provenance do not work from self-hosted or
+# third-party runners.
+#
+# Procedure (RELEASING.md): merge the reviewed release pull request, then dispatch this workflow from `main`, first with
+# `publish` unticked (a dry run: every check runs and nothing is published), then ticked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to npm. Unticked is a dry run: every check runs and nothing is published."
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-starpresence-mcp
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify_release_policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+      - name: Verify release-policy tests
+        run: node --test
+
+  candidate:
+    needs: verify_release_policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Reviewed StarPresence/starpresence-agent main commit used for the consumer contract test.
+      # Update this full SHA in a reviewed pull request.
+      CLI_SHA: "5970c95bc704ee73320fcbc2d76f695189d4dc57"
+    outputs:
+      mirror_sha: ${{ steps.guard.outputs.mirror_sha }}
+      version: ${{ steps.pack.outputs.version }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+      decision: ${{ steps.decide.outputs.decision }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Guard repository, branch, event and exact current main commit
+        id: guard
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REPOSITORY" != "StarPresence/starpresence-mcp" ]]; then
+            echo "Refusing a release candidate outside StarPresence/starpresence-mcp (repository: $GITHUB_REPOSITORY)."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Refusing a release candidate outside the main branch (ref: $GITHUB_REF)."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Refusing a release candidate not started by a manual dispatch (event: $GITHUB_EVENT_NAME)."
+            exit 1
+          fi
+          if [[ "$GITHUB_WORKFLOW_REF" != "StarPresence/starpresence-mcp/.github/workflows/release.yml@refs/heads/main" ]]; then
+            echo "Refusing a run of any workflow other than release.yml on main (workflow ref: $GITHUB_WORKFLOW_REF)."
+            exit 1
+          fi
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GITHUB_SHA must be a full lowercase commit SHA."
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$GITHUB_SHA" ]]; then
+            echo "Checkout does not match GITHUB_SHA."
+            exit 1
+          fi
+          origin_url="$(git remote get-url origin)"
+          if [[ ! "$origin_url" =~ ^https://github\.com/StarPresence/starpresence-mcp(\.git)?$ ]]; then
+            echo "Checkout origin is not StarPresence/starpresence-mcp."
+            exit 1
+          fi
+
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          remote_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if [[ "$remote_main_sha" != "$GITHUB_SHA" ]]; then
+            echo "Refusing stale main candidate: origin/main no longer equals the dispatched commit."
+            exit 1
+          fi
+          printf 'mirror_sha=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Verify trusted-publishing toolchain
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const [major, minor] = process.versions.node.split('.').map(Number);
+          if (major < 22 || (major === 22 && minor < 14)) {
+            throw new Error('trusted publish requires Node.js >=22.14');
+          }
+          NODE
+          node - <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const [major, minor, patch] = execFileSync(
+            'npm',
+            ['--version'],
+            { encoding: 'utf8' },
+          ).trim().split('.').map(Number);
+          if (
+            major < 11
+            || (major === 11 && minor < 5)
+            || (major === 11 && minor === 5 && patch < 1)
+          ) {
+            throw new Error('trusted publish requires npm >=11.5.1');
+          }
+          NODE
+          echo "node $(node --version), npm $(npm --version)"
+
+      - name: Guard package metadata
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          const manifest = require('./server.json');
+
+          if (pkg.name !== '@starpresence/mcp') {
+            throw new Error(`unexpected package name: ${pkg.name}`);
+          }
+          if (pkg.version !== manifest.version) {
+            throw new Error(
+              `version mismatch: package.json ${pkg.version} vs server.json ${manifest.version}`,
+            );
+          }
+          if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(pkg.version)) {
+            throw new Error(`release version must be semver-like: ${pkg.version}`);
+          }
+          if (pkg.repository?.url !== 'git+https://github.com/StarPresence/starpresence-mcp.git') {
+            throw new Error('package repository must identify the trusted-publisher repository');
+          }
+          if (pkg.publishConfig?.access !== 'public') {
+            throw new Error('package publishConfig.access must be public');
+          }
+          NODE
+
+      - name: Pack and hash the exact candidate once
+        id: pack
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          mkdir -p "$release_dir"
+
+          version="$(node -p "require('./package.json').version")"
+          pack_output="$(
+            npm pack \
+              --silent \
+              --ignore-scripts \
+              --pack-destination "$release_dir"
+          )"
+          if [[ -z "$pack_output" || "$pack_output" == *$'\n'* ]]; then
+            echo "npm pack must produce exactly one filename, got: $pack_output"
+            exit 1
+          fi
+          expected_filename="starpresence-mcp-$version.tgz"
+          if [[ "$pack_output" != "$expected_filename" ]]; then
+            echo "Unexpected packed filename: expected $expected_filename, got $pack_output."
+            exit 1
+          fi
+          if [[ ! -f "$release_dir/$pack_output" || -L "$release_dir/$pack_output" ]]; then
+            echo "npm pack did not create one regular tarball."
+            exit 1
+          fi
+          mv "$release_dir/$pack_output" "$release_dir/package.tgz"
+
+          printf '%s\n' "$version" > "$release_dir/version.txt"
+          printf '%s\n' "$GITHUB_SHA" > "$release_dir/mirror-sha.txt"
+          (
+            cd "$release_dir"
+            sha256sum package.tgz > package.tgz.sha256
+          )
+
+          printf '%s\n' \
+            package/LICENSE \
+            package/README.md \
+            package/SKILL.md \
+            package/agent-contract.generated.json \
+            package/package.json \
+            package/server.json \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-candidate-contents.txt"
+          tar -tzf "$release_dir/package.tgz" \
+            | sed '/\/$/d' \
+            | LC_ALL=C sort -u > "$RUNNER_TEMP/actual-candidate-contents.txt"
+          diff --unified \
+            "$RUNNER_TEMP/expected-candidate-contents.txt" \
+            "$RUNNER_TEMP/actual-candidate-contents.txt"
+
+          sha256="$(awk '{print $1}' "$release_dir/package.tgz.sha256")"
+          printf 'version=%s\nsha256=%s\n' "$version" "$sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the immutable candidate before any consumer code runs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: candidate
+          path: ${{ runner.temp }}/release/candidate
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Check out the exact CLI consumer commit
+        run: |
+          set -euo pipefail
+          if [[ ! "$CLI_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "CLI_SHA must be a full lowercase commit SHA."
+            exit 1
+          fi
+
+          git clone \
+            --no-checkout \
+            --filter=blob:none \
+            --single-branch \
+            --branch main \
+            https://github.com/StarPresence/starpresence-agent.git \
+            "$RUNNER_TEMP/cli-consumer"
+          git -C "$RUNNER_TEMP/cli-consumer" checkout --detach "$CLI_SHA"
+
+          actual_cli_sha="$(git -C "$RUNNER_TEMP/cli-consumer" rev-parse HEAD)"
+          if [[ "$actual_cli_sha" != "$CLI_SHA" ]]; then
+            echo "CLI checkout mismatch: expected $CLI_SHA, got $actual_cli_sha."
+            exit 1
+          fi
+          if ! git -C "$RUNNER_TEMP/cli-consumer" merge-base --is-ancestor \
+            "$CLI_SHA" refs/remotes/origin/main; then
+            echo "Pinned CLI commit is not reachable from StarPresence/starpresence-agent main."
+            exit 1
+          fi
+
+      - name: Install the packed candidate without lifecycle scripts
+        working-directory: ${{ runner.temp }}/cli-consumer
+        run: |
+          set -euo pipefail
+          npm install \
+            --no-save \
+            --package-lock=false \
+            --ignore-scripts \
+            "$RUNNER_TEMP/release/candidate/package.tgz" \
+            ajv@8.20.0 \
+            ajv-formats@3.0.1
+
+      - name: Test CLI requests against the exact candidate
+        working-directory: ${{ runner.temp }}/cli-consumer
+        run: npm run test:contract
+
+      - name: Verify the tested candidate is unchanged
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          (
+            cd "$release_dir"
+            sha256sum --check package.tgz.sha256
+          )
+
+      - name: Decide publish or verified no-op
+        id: decide
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          version="$(cat "$release_dir/version.txt")"
+          checksum_line="$(cat "$release_dir/package.tgz.sha256")"
+          expected_sha="${checksum_line%% *}"
+          package_spec="@starpresence/mcp@$version"
+          registry_error="$RUNNER_TEMP/npm-view-decision-error.log"
+
+          if published_version="$(
+            npm view "$package_spec" version \
+              --registry=https://registry.npmjs.org/ \
+              2>"$registry_error"
+          )"; then
+            if [[ "$published_version" != "$version" ]]; then
+              echo "Registry returned unexpected version $published_version."
+              exit 1
+            fi
+
+            registry_dir="$RUNNER_TEMP/existing-registry"
+            mkdir -p "$registry_dir"
+            registry_pack_error="$RUNNER_TEMP/npm-pack-decision-error.log"
+            if ! registry_filename="$(
+              npm pack "$package_spec" \
+                --silent \
+                --ignore-scripts \
+                --pack-destination "$registry_dir" \
+                --registry=https://registry.npmjs.org/ \
+                2>"$registry_pack_error"
+            )"; then
+              echo "Existing registry version could not be downloaded:"
+              cat "$registry_pack_error"
+              exit 1
+            fi
+
+            expected_filename="starpresence-mcp-$version.tgz"
+            if [[ "$registry_filename" != "$expected_filename" ]]; then
+              echo "Existing registry filename mismatch: expected $expected_filename, got $registry_filename."
+              exit 1
+            fi
+            registry_tarball="$registry_dir/$registry_filename"
+            if [[ ! -f "$registry_tarball" || -L "$registry_tarball" ]]; then
+              echo "Existing registry pack did not create one regular tarball."
+              exit 1
+            fi
+            actual_sha="$(sha256sum "$registry_tarball" | awk '{print $1}')"
+            if [[ "$actual_sha" != "$expected_sha" ]]; then
+              echo "Version $version already exists with different bytes; bump the package version."
+              exit 1
+            fi
+
+            decision="skip"
+            echo "Registry already contains the exact tested bytes for $package_spec; publishing is a no-op."
+          else
+            if ! grep -q 'E404' "$registry_error"; then
+              echo "Registry lookup failed for a reason other than an unpublished version:"
+              cat "$registry_error"
+              exit 1
+            fi
+            decision="publish"
+            echo "Registry confirms $package_spec is unpublished."
+          fi
+
+          printf 'decision=%s\n' "$decision" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      OUT_MIRROR_SHA: ${{ needs.candidate.outputs.mirror_sha }}
+      OUT_VERSION: ${{ needs.candidate.outputs.version }}
+      OUT_SHA256: ${{ needs.candidate.outputs.sha256 }}
+      OUT_DECISION: ${{ needs.candidate.outputs.decision }}
+      INPUT_PUBLISH: ${{ inputs.publish }}
+    steps:
+      # Deliberately no checkout: this job must never execute repository or CLI code. It is the only job with a publishing
+      # permission, and it reads no secret.
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate
+          path: ${{ runner.temp }}/release/candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Verify the exact approved artifact
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+
+          printf '%s\n' \
+            mirror-sha.txt \
+            package.tgz \
+            package.tgz.sha256 \
+            version.txt \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-release-files.txt"
+          find "$release_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' \
+            | LC_ALL=C sort > "$RUNNER_TEMP/actual-release-files.txt"
+          diff --unified \
+            "$RUNNER_TEMP/expected-release-files.txt" \
+            "$RUNNER_TEMP/actual-release-files.txt"
+
+          for filename in \
+            mirror-sha.txt \
+            package.tgz \
+            package.tgz.sha256 \
+            version.txt; do
+            if [[ ! -f "$release_dir/$filename" || -L "$release_dir/$filename" ]]; then
+              echo "Release artifact entry is not a regular file: $filename"
+              exit 1
+            fi
+          done
+
+          version="$(cat "$release_dir/version.txt")"
+          mirror_sha="$(cat "$release_dir/mirror-sha.txt")"
+          checksum_line="$(cat "$release_dir/package.tgz.sha256")"
+          expected_sha="${checksum_line%% *}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid candidate version metadata."
+            exit 1
+          fi
+          if [[ ! "$mirror_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid candidate commit metadata."
+            exit 1
+          fi
+          if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid candidate SHA256 metadata."
+            exit 1
+          fi
+          if [[ "$checksum_line" != "$expected_sha  package.tgz" ]]; then
+            echo "Checksum manifest has an unexpected format."
+            exit 1
+          fi
+          (
+            cd "$release_dir"
+            sha256sum --check package.tgz.sha256
+          )
+
+          # The same facts as the candidate job recorded them as job outputs before any consumer code ran.
+          if [[ "$version" != "$OUT_VERSION" ]]; then
+            echo "Artifact version does not match the candidate job output."
+            exit 1
+          fi
+          if [[ "$expected_sha" != "$OUT_SHA256" ]]; then
+            echo "Artifact SHA256 does not match the candidate job output."
+            exit 1
+          fi
+          if [[ "$mirror_sha" != "$OUT_MIRROR_SHA" || "$mirror_sha" != "$GITHUB_SHA" ]]; then
+            echo "Artifact commit does not match the candidate job output and the dispatched commit."
+            exit 1
+          fi
+          if [[ "$OUT_DECISION" != "publish" && "$OUT_DECISION" != "skip" ]]; then
+            echo "Invalid candidate publish decision."
+            exit 1
+          fi
+
+      - name: Guard current main, registry, and trusted-publishing toolchain
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          version="$(cat "$release_dir/version.txt")"
+          mirror_sha="$(cat "$release_dir/mirror-sha.txt")"
+
+          if [[ "$GITHUB_REPOSITORY" != "StarPresence/starpresence-mcp" ]]; then
+            echo "Refusing trusted publish outside StarPresence/starpresence-mcp (repository: $GITHUB_REPOSITORY)."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Refusing trusted publish outside the main branch (ref: $GITHUB_REF)."
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Refusing trusted publish outside a manual dispatch (event: $GITHUB_EVENT_NAME)."
+            exit 1
+          fi
+          if [[ "$GITHUB_WORKFLOW_REF" != "StarPresence/starpresence-mcp/.github/workflows/release.yml@refs/heads/main" ]]; then
+            echo "Refusing a run of any workflow other than release.yml on main (workflow ref: $GITHUB_WORKFLOW_REF)."
+            exit 1
+          fi
+          if [[ "$INPUT_PUBLISH" != "true" && "$INPUT_PUBLISH" != "false" ]]; then
+            echo "The publish input must be true or false."
+            exit 1
+          fi
+
+          remote_main_line="$(
+            git ls-remote \
+              https://github.com/StarPresence/starpresence-mcp.git \
+              refs/heads/main
+          )"
+          if [[ "$remote_main_line" != "$mirror_sha"$'\trefs/heads/main' ]]; then
+            echo "Refusing stale candidate: origin/main no longer equals $mirror_sha."
+            exit 1
+          fi
+
+          if [[ "$OUT_DECISION" == "skip" ]]; then
+            echo "Exact version $version is already published; no OIDC token will be requested."
+            exit 0
+          fi
+
+          package_spec="@starpresence/mcp@$version"
+          registry_error="$RUNNER_TEMP/npm-view-error.log"
+          if published_version="$(
+            npm view "$package_spec" version \
+              --registry=https://registry.npmjs.org/ \
+              2>"$registry_error"
+          )"; then
+            echo "Refusing to overwrite existing registry version $published_version."
+            exit 1
+          fi
+          if ! grep -q 'E404' "$registry_error"; then
+            echo "Registry lookup failed for a reason other than an unpublished version:"
+            cat "$registry_error"
+            exit 1
+          fi
+
+          node - <<'NODE'
+          const [major, minor] = process.versions.node.split('.').map(Number);
+          if (major < 22 || (major === 22 && minor < 14)) {
+            throw new Error('trusted publish requires Node.js >=22.14');
+          }
+          NODE
+          node - <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const [major, minor, patch] = execFileSync(
+            'npm',
+            ['--version'],
+            { encoding: 'utf8' },
+          ).trim().split('.').map(Number);
+          if (
+            major < 11
+            || (major === 11 && minor < 5)
+            || (major === 11 && minor === 5 && patch < 1)
+          ) {
+            throw new Error('trusted publish requires npm >=11.5.1');
+          }
+          NODE
+
+          if [[ -n "${NPM_TOKEN:-}" || -n "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "Long-lived npm credentials must not be present in the publish job."
+            exit 1
+          fi
+          if [[ -f "$HOME/.npmrc" || -n "${NPM_CONFIG_USERCONFIG:-}" ]]; then
+            echo "Unexpected user npm configuration in the publish job."
+            exit 1
+          fi
+          echo "node $(node --version), npm $(npm --version)"
+
+      - name: Publish the exact tarball with short-lived OIDC and provenance
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          version="$(cat "$release_dir/version.txt")"
+          if [[ "$OUT_DECISION" == "skip" ]]; then
+            echo "Exact version $version is already published; skipping OIDC token request and npm publish."
+            exit 0
+          fi
+          if [[ "$OUT_DECISION" != "publish" ]]; then
+            echo "Invalid candidate publish decision."
+            exit 1
+          fi
+
+          if [[ "$INPUT_PUBLISH" != "true" ]]; then
+            echo "Dry run: the publish input is not ticked. Nothing is published and no OIDC token is requested."
+            npm publish "$release_dir/package.tgz" \
+              --access public \
+              --ignore-scripts \
+              --dry-run \
+              --registry=https://registry.npmjs.org/
+            exit 0
+          fi
+
+          # No token is read, exported or printed here: npm requests the short-lived OIDC token itself from the
+          # id-token permission of this job, and sends the provenance statement with the tarball.
+          npm publish "$release_dir/package.tgz" \
+            --access public \
+            --provenance \
+            --ignore-scripts \
+            --registry=https://registry.npmjs.org/
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### Release candidate"
+            echo ""
+            echo "- version: \`$OUT_VERSION\`"
+            echo "- sha256: \`$OUT_SHA256\`"
+            echo "- commit: \`$OUT_MIRROR_SHA\`"
+            echo "- registry decision: \`$OUT_DECISION\`"
+            echo "- publish input: \`$INPUT_PUBLISH\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify_registry:
+    needs:
+      - candidate
+      - publish
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      OUT_DECISION: ${{ needs.candidate.outputs.decision }}
+    steps:
+      # Deliberately no checkout and no publishing permission.
+      - name: Download the immutable candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: candidate
+          path: ${{ runner.temp }}/release/candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.18.0"
+
+      - name: Verify registry tarball bytes, contents and provenance
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release/candidate"
+          version="$(cat "$release_dir/version.txt")"
+          checksum_line="$(cat "$release_dir/package.tgz.sha256")"
+          expected_sha="${checksum_line%% *}"
+          if [[ "$OUT_DECISION" != "publish" && "$OUT_DECISION" != "skip" ]]; then
+            echo "Invalid candidate publish decision."
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid candidate version metadata."
+            exit 1
+          fi
+          if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Invalid candidate SHA256 metadata."
+            exit 1
+          fi
+          (
+            cd "$release_dir"
+            sha256sum --check package.tgz.sha256
+          )
+
+          package_spec="@starpresence/mcp@$version"
+          published_version=""
+          for attempt in {1..12}; do
+            published_version="$(
+              npm view "$package_spec" version \
+                --registry=https://registry.npmjs.org/ \
+                2>/dev/null \
+                || true
+            )"
+            if [[ "$published_version" == "$version" ]]; then
+              break
+            fi
+            if [[ "$attempt" == "12" ]]; then
+              echo "Registry did not expose exact version $version."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          registry_dir="$RUNNER_TEMP/registry"
+          mkdir -p "$registry_dir"
+          registry_filename=""
+          for attempt in {1..6}; do
+            if registry_filename="$(
+              npm pack "$package_spec" \
+                --silent \
+                --ignore-scripts \
+                --pack-destination "$registry_dir" \
+                --registry=https://registry.npmjs.org/ \
+                2>/dev/null
+            )" && [[ -n "$registry_filename" ]]; then
+              break
+            fi
+            if [[ "$attempt" == "6" ]]; then
+              echo "Registry tarball for $package_spec was not downloadable."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          expected_filename="starpresence-mcp-$version.tgz"
+          if [[ "$registry_filename" != "$expected_filename" ]]; then
+            echo "Registry tarball name mismatch: expected $expected_filename, got $registry_filename."
+            exit 1
+          fi
+          registry_tarball="$registry_dir/$registry_filename"
+          if [[ ! -f "$registry_tarball" || -L "$registry_tarball" ]]; then
+            echo "Registry pack did not create one regular tarball."
+            exit 1
+          fi
+
+          actual_sha="$(sha256sum "$registry_tarball" | awk '{print $1}')"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "Registry tarball SHA256 does not match the tested candidate."
+            exit 1
+          fi
+
+          printf '%s\n' \
+            package/LICENSE \
+            package/README.md \
+            package/SKILL.md \
+            package/agent-contract.generated.json \
+            package/package.json \
+            package/server.json \
+            | LC_ALL=C sort > "$RUNNER_TEMP/expected-registry-contents.txt"
+          tar -tzf "$registry_tarball" \
+            | sed '/\/$/d' \
+            | LC_ALL=C sort -u > "$RUNNER_TEMP/actual-registry-contents.txt"
+          diff --unified \
+            "$RUNNER_TEMP/expected-registry-contents.txt" \
+            "$RUNNER_TEMP/actual-registry-contents.txt"
+
+          # A version this run published must carry the provenance statement it asked for; a version that was already
+          # there (decision skip) keeps whatever it was published with.
+          if [[ "$OUT_DECISION" == "publish" ]]; then
+            attestation_url=""
+            for attempt in {1..24}; do
+              attestation_url="$(
+                npm view "$package_spec" dist.attestations.url \
+                  --registry=https://registry.npmjs.org/ \
+                  2>/dev/null \
+                  || true
+              )"
+              if [[ -n "$attestation_url" ]]; then
+                break
+              fi
+              if [[ "$attempt" == "24" ]]; then
+                echo "Registry shows no provenance attestation for $package_spec."
+                exit 1
+              fi
+              sleep 5
+            done
+            echo "Provenance attestation: $attestation_url"
+          fi
