@@ -341,6 +341,17 @@ test('verifies registry bytes, contents and provenance without publishing author
   assert.ok(verify.includes('diff --unified'));
   assert.ok(verify.includes('npm view "$package_spec" dist.attestations.url'));
   assert.ok(verify.includes('needs:\n      - candidate\n      - publish\n'));
+  // npm prints "Your package is being processed and may take a few minutes to become available". The first release's check
+  // waited 60 s, gave up and ended red although the publish had worked (be#5022), so the waits are pinned: the version for
+  // five minutes, the download and the attestation for three each, five seconds apart, and every loop fails on its last
+  // attempt (a loop that simply ends would let the checks after it run on an empty value).
+  const waits = [...verify.matchAll(/for attempt in \{1\.\.(\d+)\}; do/g)].map((match) => Number(match[1]));
+  assert.equal(waits.length, 3, 'the registry check has three polling loops');
+  assert.ok(waits[0] >= 60 && waits[1] >= 36 && waits[2] >= 36, `the registry waits are too short: ${waits.join(', ')} polls`);
+  for (const wait of waits) {
+    assert.ok(verify.includes(`if [[ "$attempt" == "${wait}" ]]; then`), `the loop of ${wait} polls does not fail on its last attempt`);
+  }
+  assert.equal(verify.match(/^\s+sleep 5$/gm)?.length, 3, 'every polling loop sleeps five seconds between polls');
 });
 
 test('fails closed: nothing outside the scripts is conditional or allowed to fail, and no refusal is disarmed unnoticed', () => {

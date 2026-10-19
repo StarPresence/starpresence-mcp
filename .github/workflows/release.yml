@@ -665,7 +665,9 @@ jobs:
 
           package_spec="@starpresence/mcp@$version"
           published_version=""
-          for attempt in {1..12}; do
+          # npm says "Your package is being processed and may take a few minutes to become available": wait up to five
+          # minutes (the first release's check gave up after one, be#5022).
+          for attempt in {1..60}; do
             published_version="$(
               npm view "$package_spec" version \
                 --registry=https://registry.npmjs.org/ \
@@ -675,7 +677,7 @@ jobs:
             if [[ "$published_version" == "$version" ]]; then
               break
             fi
-            if [[ "$attempt" == "12" ]]; then
+            if [[ "$attempt" == "60" ]]; then
               echo "Registry did not expose exact version $version."
               exit 1
             fi
@@ -685,7 +687,8 @@ jobs:
           registry_dir="$RUNNER_TEMP/registry"
           mkdir -p "$registry_dir"
           registry_filename=""
-          for attempt in {1..6}; do
+          # The tarball can lag behind the version: up to three minutes.
+          for attempt in {1..36}; do
             if registry_filename="$(
               npm pack "$package_spec" \
                 --silent \
@@ -696,7 +699,7 @@ jobs:
             )" && [[ -n "$registry_filename" ]]; then
               break
             fi
-            if [[ "$attempt" == "6" ]]; then
+            if [[ "$attempt" == "36" ]]; then
               echo "Registry tarball for $package_spec was not downloadable."
               exit 1
             fi
@@ -739,7 +742,8 @@ jobs:
           # there (decision skip) keeps whatever it was published with.
           if [[ "$OUT_DECISION" == "publish" ]]; then
             attestation_url=""
-            for attempt in {1..24}; do
+            # The attestation can lag behind the version too: up to three minutes.
+            for attempt in {1..36}; do
               attestation_url="$(
                 npm view "$package_spec" dist.attestations.url \
                   --registry=https://registry.npmjs.org/ \
@@ -749,7 +753,7 @@ jobs:
               if [[ -n "$attestation_url" ]]; then
                 break
               fi
-              if [[ "$attempt" == "24" ]]; then
+              if [[ "$attempt" == "36" ]]; then
                 echo "Registry shows no provenance attestation for $package_spec."
                 exit 1
               fi
